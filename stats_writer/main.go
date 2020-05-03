@@ -1,91 +1,66 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
-	"runtime"
 	"time"
 
-	"github.com/csocoteanu/go-stats-collector/stats_writer/gateways"
+	"github.com/csocoteanu/go-stats-collector/stats_writer/usecases"
 
 	"github.com/csocoteanu/go-stats-collector/stats_writer/domain"
 
-	"github.com/shirou/gopsutil/mem"
+	"github.com/csocoteanu/go-stats-collector/stats_writer/gateways"
 )
 
-func getHostStats() (domain.HostStats, error) {
-	s := domain.HostStats{
-		OS:           runtime.GOOS,
-		Architecture: runtime.GOARCH,
-		ReportedTime: time.Now(),
-	}
+const defaultSensorCount = 10
 
-	vmStat, err := mem.VirtualMemory()
-	if err != nil {
-		return s, err
-	}
+var sensorCount = defaultSensorCount
 
-	s.FreeMemoryMB = int(vmStat.Free / (1024 * 1024))
-	s.TotalMemoryMB = int(vmStat.Total / (1024 * 1024))
-
-	return s, nil
-}
-
-func scrapeStats(quit chan struct{}, cassRepo *gateways.CassandraRepository) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	ctx := context.Background()
-
-	for {
-		select {
-		case <-ticker.C:
-			stats, err := getHostStats()
-			if err != nil {
-				panic(err)
-			}
-
-			statBytes, err := json.Marshal(stats)
-			if err != nil {
-				panic(err)
-			}
-
-			log.Printf("Polled: %s", string(statBytes))
-
-			err = cassRepo.InsertHostStats(ctx, "0", time.Now(), &stats)
-			if err != nil {
-				panic(err)
-			}
-		case <-quit:
-			log.Printf("Stopping scraper...")
-			return
-		}
-	}
+func parseArgs() {
+	flag.IntVar(&sensorCount, "sensor-count", defaultSensorCount, "sensors to start reporting data")
+	flag.Parse()
 }
 
 func main() {
-	config := gateways.CassandraRepositoryConfig{
+	parseArgs()
+
+	config := gateways.CassandraStatsRepositoryConfig{
 		ClusterIPs:      []string{"localhost"},
 		Timeout:         30 * time.Second,
 		NumQueryRetries: 3,
 		NumConnections:  20,
 	}
 
-	cassRepo, err := gateways.NewCassandraRepository(&config)
+	cassRepo, err := gateways.NewCassandraStatsRepository(&config)
 	if err != nil {
 		panic(err)
 	}
+	log.Print("Created Cassandra repository...")
 
-	quit := make(chan struct{})
+	timeStart := time.Now()
+
+	sensors := []domain.Sensor{}
+	for i := 0; i < sensorCount; i++ {
+		sensor := usecases.NewSensor(fmt.Sprintf("%d", i), 500*time.Millisecond, cassRepo, nil)
+		sensor.ScrapeStats()
+		sensors = append(sensors, sensor)
+	}
+	log.Printf("Created %d sensors...", sensorCount)
+
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
-
-	go scrapeStats(quit, cassRepo)
 
 	select {
 	case <-c:
 		log.Printf("Quiting...")
-		quit <- struct{}{}
+		for _, sensor := range sensors {
+			sensor.Stop()
+		}
 	}
+
+	timeEnd := time.Now().Sub(timeStart)
+	log.Printf("Running %d sensors for %s...", sensorCount, timeEnd.String())
 }

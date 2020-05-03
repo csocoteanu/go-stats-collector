@@ -18,20 +18,20 @@ const (
 
 var insertLiveSensorUpdatesCql = fmt.Sprintf(`INSERT INTO %s (sensor_id, day, reported_time, os, arch, total_mem_mb, free_mem_mb) VALUES (?,?,?,?,?,?,?)`, liveSensorUpdatesTableName)
 
-type CassandraRepositoryConfig struct {
+type CassandraStatsRepositoryConfig struct {
 	ClusterIPs      []string
 	Timeout         time.Duration
 	NumConnections  int
 	NumQueryRetries int
 }
 
-type CassandraRepository struct {
-	repoConfig    *CassandraRepositoryConfig
+type CassandraStatsRepository struct {
+	repoConfig    *CassandraStatsRepositoryConfig
 	clusterConfig *gocql.ClusterConfig
 	session       *gocql.Session
 }
 
-func NewCassandraRepository(config *CassandraRepositoryConfig) (*CassandraRepository, error) {
+func NewCassandraStatsRepository(config *CassandraStatsRepositoryConfig) (*CassandraStatsRepository, error) {
 	clusterConfig := gocql.NewCluster(config.ClusterIPs...)
 	clusterConfig.Keyspace = keyspace
 	clusterConfig.NumConns = config.NumConnections
@@ -50,7 +50,7 @@ func NewCassandraRepository(config *CassandraRepositoryConfig) (*CassandraReposi
 		return nil, err
 	}
 
-	r := CassandraRepository{
+	r := CassandraStatsRepository{
 		repoConfig:    config,
 		clusterConfig: clusterConfig,
 		session:       session,
@@ -59,7 +59,7 @@ func NewCassandraRepository(config *CassandraRepositoryConfig) (*CassandraReposi
 	return &r, nil
 }
 
-func (r *CassandraRepository) InsertHostStats(
+func (r *CassandraStatsRepository) InsertHostStats(
 	ctx context.Context,
 	sensorID string,
 	reportedTime time.Time,
